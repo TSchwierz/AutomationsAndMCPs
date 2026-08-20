@@ -24,7 +24,7 @@ import requests
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-SERVER_SCRIPT = Path(__file__).resolve().parent / "weather_server.py"
+SERVER_SCRIPT = Path(__file__).resolve() / "weather_server.py"
 LOCAL_TZ = ZoneInfo("Europe/Berlin")  # Kerpen/Nijmegen/Den Bosch are all this offset
 
 # --- Your weekly travel pattern ------------------------------------------
