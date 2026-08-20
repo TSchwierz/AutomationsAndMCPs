@@ -1,143 +1,170 @@
 # weather-packing-bot
 
-Every Friday afternoon: a Slack message covering the weather from now
-through Monday evening across your Kerpen -> Nijmegen -> Den Bosch -> Kerpen
-travel loop, with a packing recommendation and a small text chart. Built as
-an excuse to learn MCP: the forecast is served by a real MCP server, called
-by a real MCP client, not just imported as a Python function.
+A scheduled bot that posts a Slack message with a multi-day weather
+forecast and a packing recommendation for a recurring three-city travel
+route. It is also a small reference implementation of an MCP (Model
+Context Protocol) server and client pair: the forecast data is served by a
+standalone MCP server and consumed by an MCP client, rather than being
+fetched directly by the bot script.
 
-## How it fits together
+## Overview
+
+The bot runs on a weekly schedule (Fridays, 15:00 CEST) and posts a Slack
+message covering the weather from that day through the following Monday
+evening. The forecast and packing recommendation are itinerary-aware: they
+account for which of three cities the traveler is expected to be in on
+each day of that window, rather than showing all locations' weather
+indiscriminately.
 
 ```
-GitHub Actions (Fridays 15:00 CEST)
+GitHub Actions (scheduled, Fridays)
         │
         ▼
-bot/packing_advisor.py            <- MCP client
-        │  spawns as subprocess, talks over stdio
+bot/packing_advisor.py            MCP client
+        │  spawns as subprocess, communicates over stdio
         ▼
-mcp_server/weather_server.py      <- MCP server, calls Open-Meteo
+mcp_server/weather_server.py      MCP server, queries Open-Meteo
         │
         ▼
    Slack incoming webhook
 ```
 
-**Why two processes instead of one script?** That's the whole point of MCP:
-the server doesn't know or care who's calling it - it could be this bot,
-Claude Desktop, or any other MCP client. The client doesn't import the
-server's Python functions directly; it discovers them at runtime by asking
-"what tools do you have?" (`session.list_tools()`) and then calls them by
-name over a protocol (`session.call_tool(...)`). That's what makes it MCP
-rather than just "a function I imported."
+## Why an MCP server and client
+
+The server exposes weather tools without any knowledge of who calls them
+or why - it could be this bot, an IDE assistant, or any other MCP-capable
+client. The client does not import the server's Python functions directly;
+it discovers available tools at runtime (`session.list_tools()`) and
+invokes them by name over the protocol (`session.call_tool(...)`). This
+separation is what distinguishes the design from simply calling a function
+in the same process.
+
+## Components
 
 ### `mcp_server/weather_server.py`
-Four tools via `MCPServer` (from the `mcp` package):
-- `list_cities()` - which cities are configured.
-- `get_forecast(city, days=3)` - daily summary for one city.
-- `get_forecast_all(days=3)` - the same, for every configured city.
-- `render_temperature_chart(days=4)` - a compact per-city, per-day text
-  chart (temperature bar + weather icon + rain), meant to be dropped
-  straight into a Slack code block.
 
-Add more cities by extending the `COORDINATES` dict.
+An MCP server (using the `MCPServer` class from the `mcp` package) that
+wraps the Open-Meteo API and exposes four tools:
+
+| Tool | Description |
+|---|---|
+| `list_cities()` | Returns the configured city names. |
+| `get_forecast(city, days=3)` | Daily weather summary for one city. |
+| `get_forecast_all(days=3)` | Daily weather summary for every configured city. |
+| `render_temperature_chart(days=4)` | A compact per-city, per-day text chart (temperature bar, weather icon, precipitation), formatted for a Slack code block. |
+
+Cities are defined in the `COORDINATES` dict and can be extended freely.
 
 ### `bot/packing_advisor.py`
-1. Works out **how many days to ask for**: today through the next Monday,
-   inclusive (`forecast_window()`). Triggered on a Friday that's 4 days
-   (Fri/Sat/Sun/Mon).
-2. Spawns `weather_server.py` as a subprocess, does the MCP handshake, calls
-   `get_forecast_all` and `render_temperature_chart` for that many days.
-3. Matches each date in the window against `WEEKLY_ITINERARY` - a small
-   dict at the top of the file mapping weekday -> which city (or cities)
-   you're in - so the recommendation only considers weather where you'll
-   actually be, not all three cities every day. Monday has two entries
-   (Den Bosch by day, Kerpen by evening) since that's a travel day.
-4. Runs the matched days through `recommend_packing()` - plain temperature/
-   precipitation thresholds, not an AI call, so it's fast, free, and
-   predictable. Tune the thresholds (or `WEEKLY_ITINERARY`, if your route
-   changes) directly in that file.
-5. Formats a Slack Block Kit message (day-by-day breakdown, packing list,
-   chart) and POSTs it to `SLACK_WEBHOOK_URL`.
 
-### The chart, and why it's ASCII, not a PNG
-`render_temperature_chart` builds the chart, which matches what you asked
-for ("construction might be handled by the MCP"). It's plain text/monospace
-rather than an image, though, for a concrete reason: **a Slack incoming
-webhook can only post text/Block-Kit JSON - it cannot upload a binary
-image.** To post a real PNG you'd need a Slack *bot token* (create a Slack
-App, add the `files:write` scope, install it to your workspace) and call
-`files.upload` on Slack's Web API instead of the webhook. That's a
-reasonable upgrade later, but it's a bigger, separate piece of setup
-(managing an OAuth token as another secret) - the current version gets you
-a genuinely useful "chart" today with zero extra infrastructure. If you
-want to go there, the code you already have does 90% of the work: you'd
-add a matplotlib-based tool to the MCP server that returns a base64 PNG,
-and swap `post_to_slack` for a `files.upload` call.
+An MCP client that:
 
-## Bugs fixed from the original draft
-Worth knowing about since they're easy to reintroduce:
-- `import httpx2` - typo/unused import, removed.
-- `get_params()` built a dict but never `return`ed it.
-- `openmeteo` (the Open-Meteo client) was only created inside
-  `if __name__ == "__main__"`, so any tool call would hit a `NameError` -
-  moved to module scope.
-- `process_response` did `data[CITIES[i]] = ...` where `data` was a `list`
-  (needs a dict) and `CITIES` was a `dict_keys` object (not subscriptable).
-- Tool functions returned pandas `DataFrame`s / numpy floats, which aren't
-  JSON-serializable - MCP results go over the wire as JSON. Everything a
-  tool returns now is plain `dict`/`float`/`str`/`int`.
-- Worth flagging on myself too: I initially "corrected" your original
-  `from mcp.server import MCPServer` import to a different (FastMCP)
-  import based on search results, which turned out to be wrong for the SDK
-  version actually installed - your original import was right. Caught it
-  by actually running the code in a sandbox rather than trusting docs. Two
-  different frameworks (`fastmcp` the standalone fork vs. `mcp` the
-  official SDK) get mixed up in tutorials constantly - worth knowing if you
-  go looking for more MCP examples yourself.
+1. Computes the forecast window - the current date through the following
+   Monday, inclusive - via `forecast_window()`.
+2. Spawns `weather_server.py` as a subprocess, performs the MCP handshake,
+   and calls `get_forecast_all` and `render_temperature_chart` for that
+   window.
+3. Matches each date in the window against `WEEKLY_ITINERARY`, a dict
+   mapping weekday to the city (or cities) the traveler is expected to be
+   in that day, so that only relevant locations inform the output.
+4. Passes the matched days to `recommend_packing()`, a rule-based function
+   using temperature and precipitation thresholds (no external AI call).
+5. Formats a Slack Block Kit message - day-by-day breakdown, packing list,
+   and chart - and posts it via an incoming webhook.
+
+### Travel itinerary
+
+`WEEKLY_ITINERARY` in `bot/packing_advisor.py` encodes a recurring weekly
+route:
+
+```python
+WEEKLY_ITINERARY = {
+    4: [("Nijmegen", "arrival")],       # Friday
+    5: [("Nijmegen", "")],              # Saturday
+    6: [("Nijmegen", "")],              # Sunday
+    0: [("Den Bosch", "day"), ("Kerpen", "evening, back home")],  # Monday
+}
+```
+
+Monday has two entries because it is a transition day: the itinerary
+places the traveler in Den Bosch during the day and back in Kerpen by
+evening. This dict is the single place to edit if the route changes.
+
+### The chart
+
+`render_temperature_chart` produces a plain-text, monospace chart rather
+than an image. This is a deliberate constraint: a Slack *incoming webhook*
+can only post text or Block Kit JSON - it cannot upload a binary file.
+Posting an actual image would require a Slack bot token (an installed
+Slack App with the `files:write` scope) and a call to Slack's `files.upload`
+Web API instead of the webhook. That is a viable extension but requires
+managing an additional credential; the current implementation avoids that
+requirement entirely.
 
 ## Setup
 
-### 1. Slack webhook
-You said you already have one - just make sure "Incoming Webhooks" is
-enabled on the Slack app and you have the `https://hooks.slack.com/services/...`
-URL.
+### Prerequisites
+- A Slack app with an incoming webhook URL.
+- A GitHub repository to host the code and run the scheduled workflow.
 
-### 2. Local test run
+### Local run
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env   # fill in SLACK_WEBHOOK_URL
-export $(grep -v '^#' .env | xargs)   # or use python-dotenv / direnv
+export $(grep -v '^#' .env | xargs)
 python bot/packing_advisor.py
 ```
-You should see a message land in the Slack channel your webhook points to.
-Set `SIMULATE_DATE=2026-08-21` (a Friday) in `.env` to test the itinerary
-logic without waiting for an actual Friday.
 
-You can also poke at just the MCP server on its own, without Slack:
+`SIMULATE_DATE` (see `.env.example`) can be set to an ISO date to exercise
+the itinerary/forecast-window logic without waiting for an actual Friday.
+
+The MCP server can also be inspected on its own:
 ```bash
 pip install "mcp[cli]"
-mcp dev mcp_server/weather_server.py   # opens the MCP Inspector in your browser
+mcp dev mcp_server/weather_server.py
 ```
-Good way to see the tool schemas and try `get_forecast` /
-`render_temperature_chart` by hand before wiring the bot around them.
+This opens the MCP Inspector in a browser, useful for viewing tool schemas
+and calling tools such as `get_forecast` or `render_temperature_chart`
+directly.
 
-### 3. GitHub repo config
-- **Secret** `SLACK_WEBHOOK_URL` - Settings -> Secrets and variables ->
-  Actions -> Secrets -> New repository secret.
-- Nothing else is required - the itinerary logic doesn't need repo
-  variables since it's driven by `WEEKLY_ITINERARY` in the code.
+### GitHub repository configuration
+- Add `SLACK_WEBHOOK_URL` as a repository secret (Settings → Secrets and
+  variables → Actions → Secrets).
+- No other repository configuration is required; the itinerary is defined
+  in code rather than as a repository variable.
 
-### 4. Schedule
-`.github/workflows/weekly-forecast.yml` runs Fridays at 13:00 UTC (15:00
-CEST) via `cron: "0 13 * * 5"`, and can also be triggered manually from the
-Actions tab (`workflow_dispatch`, with an optional `simulate_date` input) -
-use that to test the whole pipeline in CI before trusting the schedule.
+### Schedule
+`.github/workflows/weekly-forecast.yml` runs every Friday at 13:00 UTC
+(15:00 CEST) via `cron: "0 13 * * 5"`. Cron schedules in GitHub Actions do
+not observe daylight saving time, so during the CET (winter) period this
+fires at 14:00 local time instead of 15:00; the cron expression can be
+adjusted seasonally if that offset matters. The workflow also supports
+manual triggering (`workflow_dispatch`) with an optional `simulate_date`
+input, useful for testing before relying on the schedule.
 
-## Extending it
-- Route changes: edit `WEEKLY_ITINERARY` in `bot/packing_advisor.py`.
-- Add cities: extend `COORDINATES` in `weather_server.py`.
-- Real PNG chart in Slack: see "The chart" section above.
-- Swap the rule-based `recommend_packing()` for a call to the Anthropic API
-  if you want more conversational Slack copy - the MCP tool result is just
-  a dict, so you'd hand the matched days to `client.messages.create(...)`
-  and use the text back instead of the bullet list.
+## Known limitations and possible extensions
+- The Slack message includes a text-based chart rather than an image, for
+  the reason described above. A PNG chart via matplotlib, combined with a
+  Slack bot token and `files.upload`, is a possible follow-up.
+- `recommend_packing()` is rule-based. Replacing it with a call to an LLM
+  (e.g. the Anthropic API) would allow more natural-language output; the
+  MCP tool results are plain dicts, so they can be passed directly into
+  such a call.
+- The itinerary is a fixed weekly pattern. A calendar-integration source
+  (e.g. reading actual travel dates from a calendar) would generalize it
+  beyond a repeating weekly route.
+
+## Notes on the source material
+The original draft server script had several issues that were corrected
+during development of this implementation:
+- An unused, non-existent `httpx2` import.
+- `get_params()` built a parameters dict but did not return it.
+- The Open-Meteo client was constructed only inside `if __name__ ==
+  "__main__"`, making it unavailable to the tool functions that referenced
+  it at module scope.
+- `process_response` attempted to assign into a `list` using a `dict_keys`
+  object as an index, which is not valid.
+- Tool functions returned pandas `DataFrame` objects and numpy scalar
+  types, which are not JSON-serializable; MCP tool results must be
+  serializable, since they are transmitted as JSON.

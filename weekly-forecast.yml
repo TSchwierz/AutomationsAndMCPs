@@ -1,0 +1,38 @@
+name: Weekly packing forecast
+
+on:
+  schedule:
+    # Friday 15:00 CEST (UTC+2, European summer time) = 13:00 UTC.
+    # Cron is always UTC and does NOT follow daylight saving - in winter
+    # (CET, UTC+1) this fires at 14:00 local time instead of 15:00. Bump to
+    # "0 14 * * 5" for the winter half of the year if that hour matters to
+    # you, or just leave it - a 1-hour drift twice a year is harmless here.
+    - cron: "0 13 * * 5"
+  workflow_dispatch:
+    inputs:
+      simulate_date:
+        description: "Optional ISO date (YYYY-MM-DD) to pretend 'today' is, for testing the itinerary logic on demand"
+        required: false
+        default: ""
+
+jobs:
+  post-forecast:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run packing advisor
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SIMULATE_DATE: ${{ github.event.inputs.simulate_date }}
+        run: python bot/packing_advisor.py
