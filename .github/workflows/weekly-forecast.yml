@@ -35,4 +35,4 @@ jobs:
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           SIMULATE_DATE: ${{ github.event.inputs.simulate_date }}
-        run: python bot/packing_advisor.py
+        run: python packing_advisor.py
