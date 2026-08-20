@@ -24,7 +24,7 @@ import requests
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-SERVER_SCRIPT = Path(__file__).resolve().parent.parent / "mcp_server" / "weather_server.py"
+SERVER_SCRIPT = Path(__file__).resolve().parent.parent / "weather_server.py"
 LOCAL_TZ = ZoneInfo("Europe/Berlin")  # Kerpen/Nijmegen/Den Bosch are all this offset
 
 # --- Your weekly travel pattern ------------------------------------------
@@ -108,14 +108,14 @@ def recommend_packing(days: list[dict]) -> list[str]:
     if temp_max >= 24:
         items.append("Shorts are fine, but pack one pair of light trousers just in case")
     elif temp_max >= 17:
-        items.append("Light trousers/jeans")
+        items.append("Light trousers")
     else:
         items.append("Long trousers - it won't get warm enough for shorts")
 
     if feels_like_min <= 0:
         items.append("Thermal base layer")
     if temp_min <= 12:
-        items.append("A warm sweater or fleece")
+        items.append("A warm sweater")
     if temp_min <= 5:
         items.append("A proper winter coat")
     elif temp_min <= 12:
