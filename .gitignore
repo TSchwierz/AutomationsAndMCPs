@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+pi/data/*.db
+pi/data/*.db-*
+pi/config.toml
+!pi/config.example.toml
+pc-dashboard/node_modules/
+pc-dashboard/dist/
+pc-dashboard/.env
+.DS_Store
+*.log
+.cursor/

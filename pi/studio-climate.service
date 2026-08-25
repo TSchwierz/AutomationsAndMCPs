@@ -1,0 +1,16 @@
+[Unit]
+Description=Studio Climate Monitor (collector + LAN API)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/studio-climate/pi
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/pi/studio-climate/pi/.venv/bin/python -m studio_climate all
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

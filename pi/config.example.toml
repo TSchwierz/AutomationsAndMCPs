@@ -1,0 +1,35 @@
+# Copy to config.toml and edit for your Pi.
+
+[server]
+host = "0.0.0.0"
+port = 8787
+# Shared secret for PUT /settings. Leave empty to allow writes without a token (LAN only).
+api_token = "change-me"
+
+[database]
+# Relative paths are resolved from the pi/ directory.
+path = "data/climate.db"
+
+[collector]
+# Seconds between DHT11 samples (sensor needs >= 2s; 60s is plenty for climate).
+sample_interval_seconds = 60
+# GPIO BCM number — Joy-IT KY-015 docs use GPIO 23 (physical pin 16).
+gpio_pin = 23
+# Set true on a PC without the sensor to generate fake readings for dashboard testing.
+mock_sensor = false
+
+[ntfy]
+# Leave topic empty to disable notifications until configured.
+server = "https://ntfy.sh"
+topic = ""
+# Optional: ntfy access token if the topic is protected
+token = ""
+
+[defaults]
+humidity_min = 40
+humidity_max = 55
+temp_min = 18
+temp_max = 24
+sustain_minutes = 30
+# Minutes between repeat alerts for the same condition
+alert_cooldown_minutes = 120
