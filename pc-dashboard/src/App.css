@@ -60,11 +60,17 @@
 
 .status-row {
   display: grid;
-  grid-template-columns: 1.2fr 1fr;
+  grid-template-columns: 1.15fr 1.15fr 1fr;
   gap: 1.25rem;
 }
 
-@media (max-width: 800px) {
+@media (max-width: 1000px) {
+  .status-row {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 640px) {
   .status-row {
     grid-template-columns: 1fr;
   }
@@ -109,6 +115,114 @@
 
 .status.out_of_band {
   box-shadow: inset 0 0 0 2px rgba(155, 47, 47, 0.4);
+}
+
+.card h2 .head-icon {
+  width: 1.4rem;
+  height: 1.5rem;
+  margin-left: 0.45rem;
+  vertical-align: -0.35rem;
+  color: var(--muted);
+}
+
+.outside {
+  box-shadow: inset 0 0 0 1px rgba(28, 36, 32, 0.06);
+}
+
+.vent {
+  margin: 0.7rem 0 0;
+  font-size: 0.88rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: 8px;
+  border-left: 3px solid var(--muted);
+  background: rgba(28, 36, 32, 0.04);
+  color: var(--muted);
+}
+
+.vent.ventilate {
+  border-left-color: var(--ok);
+  color: var(--ok);
+  background: rgba(47, 107, 69, 0.08);
+}
+
+.vent.keep_closed {
+  border-left-color: var(--bad);
+  color: var(--bad);
+  background: rgba(155, 47, 47, 0.07);
+}
+
+.weather-icon {
+  width: 1.5rem;
+  height: 1.6rem;
+  flex: 0 0 auto;
+}
+
+.forecast-meta {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.forecast-headline {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0 0 0.9rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.forecast-headline .headline-icon {
+  width: 1.7rem;
+  height: 1.8rem;
+  color: var(--accent);
+}
+
+.forecast-strip {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(6.5rem, 1fr));
+  gap: 0.6rem;
+}
+
+.forecast-chip {
+  display: grid;
+  justify-items: center;
+  gap: 0.2rem;
+  padding: 0.7rem 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.5);
+  text-align: center;
+}
+
+/* The hour the weather is expected to turn. */
+.forecast-chip.change {
+  border-color: rgba(196, 92, 38, 0.55);
+  background: rgba(196, 92, 38, 0.08);
+}
+
+.chip-time {
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.chip-temp {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.chip-cond {
+  font-size: 0.8rem;
+  color: var(--ink);
+}
+
+.chip-sub {
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .stats {
@@ -168,6 +282,12 @@
   height: 320px;
 }
 
+.chart-note {
+  margin: 0.6rem 0 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
 .chart-empty {
   height: 280px;
   display: grid;
@@ -202,6 +322,24 @@
 
 .settings-form label.wide {
   grid-column: 1 / -1;
+}
+
+.settings-form label.toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+  color: var(--ink);
+}
+
+.settings-form label.toggle input {
+  width: auto;
+  accent-color: var(--accent);
+}
+
+.settings-form input:disabled {
+  background: #f4f4f5;
+  color: var(--muted);
 }
 
 .settings-form input {

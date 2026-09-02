@@ -25,6 +25,35 @@ topic = ""
 # Optional: ntfy access token if the topic is protected
 token = ""
 
+[quiet_hours]
+# Suppress ntfy notifications during these hours (e.g. sleeping hours).
+# Readings are still collected; a still-active breach alerts once the window ends.
+enabled = true
+# Local wall-clock "HH:MM"; the window may wrap past midnight.
+start = "23:00"
+end = "08:00"
+# IANA zone, e.g. "Europe/Berlin". Empty = the Pi's own local time.
+timezone = ""
+
+[weather]
+# Outside temperature/humidity averaged over Open-Meteo, OpenWeatherMap and
+# Bright Sky (DWD). Needs internet access; set false for a fully offline Pi.
+enabled = true
+# Where the studio is — default is Düsseldorf.
+latitude = 51.2277
+longitude = 6.7735
+# How often to pull outside conditions + forecast. Roughly 5 requests per poll,
+# well inside every free tier.
+poll_interval_minutes = 60
+# On an alert, reuse the stored reading if it is younger than this; else refetch.
+alert_max_age_minutes = 30
+# Hours of hourly forecast to keep, so "next 4 hours" is always in range.
+forecast_hours = 12
+request_timeout_seconds = 10
+# Optional. Open-Meteo and Bright Sky need no key; leave empty to average over
+# those two only. Get one at openweathermap.org to use all three.
+openweathermap_api_key = ""
+
 [defaults]
 humidity_min = 40
 humidity_max = 55

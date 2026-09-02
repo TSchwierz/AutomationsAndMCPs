@@ -1,17 +1,36 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from .collector import default_settings
+from .collector import create_weather_service, default_settings
 from .config import AppConfig, load_config
-from .db import SETTING_KEYS, ClimateDB, parse_iso, to_iso
+from .db import (
+    SETTING_KEYS,
+    ClimateDB,
+    ForecastPoint,
+    OutsideReading,
+    parse_iso,
+    to_iso,
+    utc_now,
+)
+from .quiet_hours import format_hhmm, parse_bool, parse_hhmm
 from .sensor import band_status
+from .weather import (
+    condition_label,
+    dew_point_c,
+    summarize_next_hours,
+    ventilation_advice,
+    wind_label,
+)
+
+FORECAST_WINDOW_HOURS = 4
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +46,10 @@ class SettingsUpdate(BaseModel):
     ntfy_topic: str | None = None
     ntfy_token: str | None = None
     sample_interval_seconds: int | None = Field(default=None, ge=2)
+    quiet_hours_enabled: bool | None = None
+    quiet_hours_start: str | None = None
+    quiet_hours_end: str | None = None
+    quiet_hours_timezone: str | None = None
 
 
 def _typed_settings(raw: dict[str, str]) -> dict[str, Any]:
@@ -41,9 +64,12 @@ def _typed_settings(raw: dict[str, str]) -> dict[str, Any]:
         "alert_cooldown_minutes",
         "sample_interval_seconds",
     }
+    bool_keys = {"quiet_hours_enabled"}
     out: dict[str, Any] = {}
     for key, value in raw.items():
-        if key in float_keys:
+        if key in bool_keys:
+            out[key] = parse_bool(value)
+        elif key in float_keys:
             try:
                 out[key] = float(value)
             except ValueError:
@@ -55,6 +81,49 @@ def _typed_settings(raw: dict[str, str]) -> dict[str, Any]:
                 out[key] = value
         else:
             out[key] = value
+    return out
+
+
+def _outside_reading_json(reading: OutsideReading | None) -> dict[str, Any] | None:
+    if reading is None:
+        return None
+    return {
+        "ts": to_iso(reading.ts),
+        "temperature_c": reading.temperature_c,
+        "humidity_pct": reading.humidity_pct,
+        "dew_point_c": reading.dew_point_c,
+        "condition": reading.condition,
+        "condition_label": condition_label(reading.condition),
+        "wind_kph": reading.wind_kph,
+        "wind_label": wind_label(reading.wind_kph),
+        "precipitation_mm": reading.precipitation_mm,
+        "sources": reading.sources,
+        "provider_count": reading.provider_count,
+    }
+
+
+def _forecast_point_json(point: ForecastPoint) -> dict[str, Any]:
+    return {
+        "ts": to_iso(point.ts),
+        "temperature_c": point.temperature_c,
+        "humidity_pct": point.humidity_pct,
+        "condition": point.condition,
+        "condition_label": condition_label(point.condition),
+        "precipitation_probability": point.precipitation_probability,
+        "wind_kph": point.wind_kph,
+        "provider_count": point.provider_count,
+    }
+
+
+def _summary_json(summary: dict[str, Any] | None) -> dict[str, Any] | None:
+    if summary is None:
+        return None
+    out = dict(summary)
+    for key in ("from", "to", "change_at"):
+        value = out.get(key)
+        out[key] = to_iso(value) if isinstance(value, datetime) else None
+    out["condition_now_label"] = condition_label(out.get("condition_now"))
+    out["condition_peak_label"] = condition_label(out.get("condition_peak"))
     return out
 
 
@@ -164,6 +233,112 @@ def create_app(cfg: AppConfig | None = None) -> FastAPI:
         end = parse_iso(to) if to else None
         return db.stats(start=start, end=end)
 
+    weather = create_weather_service(cfg, db)
+    stale_after = timedelta(minutes=cfg.weather_poll_interval_minutes * 2)
+
+    def outside_payload() -> dict[str, Any]:
+        now = utc_now()
+        reading = db.latest_outside_reading()
+        indoor = db.latest_measurement()
+
+        indoor_dew = (
+            dew_point_c(indoor.temperature_c, indoor.humidity_pct)
+            if indoor is not None
+            else None
+        )
+        # Include the hour we are inside so a change one hour out still shows.
+        forecast = db.list_forecast(start=now - timedelta(hours=1))
+        summary = summarize_next_hours(
+            forecast, reading, hours=FORECAST_WINDOW_HOURS, now=now
+        )
+        window_end = now + timedelta(hours=FORECAST_WINDOW_HOURS)
+        points = [
+            p
+            for p in forecast
+            if p.ts >= now.replace(minute=0, second=0, microsecond=0)
+            and p.ts <= window_end
+        ]
+        fetched_at = next((p.fetched_at for p in points if p.fetched_at), None)
+        age_seconds = (
+            None if reading is None else int((now - reading.ts).total_seconds())
+        )
+
+        return {
+            "enabled": cfg.weather_enabled,
+            "location": {"latitude": cfg.latitude, "longitude": cfg.longitude},
+            "providers": weather.provider_names if weather else [],
+            "poll_interval_minutes": cfg.weather_poll_interval_minutes,
+            "reading": _outside_reading_json(reading),
+            "age_seconds": age_seconds,
+            "stale": reading is None or (now - reading.ts) > stale_after,
+            "indoor": (
+                None
+                if indoor is None
+                else {
+                    "ts": to_iso(indoor.ts),
+                    "temperature_c": indoor.temperature_c,
+                    "humidity_pct": indoor.humidity_pct,
+                    "dew_point_c": indoor_dew,
+                }
+            ),
+            "comparison": {
+                "temperature_delta_c": (
+                    None
+                    if indoor is None or reading is None
+                    else round(indoor.temperature_c - reading.temperature_c, 2)
+                ),
+                "humidity_delta_pct": (
+                    None
+                    if indoor is None or reading is None
+                    else round(indoor.humidity_pct - reading.humidity_pct, 1)
+                ),
+                "indoor_dew_point_c": indoor_dew,
+                "outside_dew_point_c": None if reading is None else reading.dew_point_c,
+                "ventilation": ventilation_advice(
+                    indoor_dew, reading.dew_point_c if reading else None
+                ),
+            },
+            "forecast": {
+                "fetched_at": to_iso(fetched_at) if fetched_at else None,
+                "window_hours": FORECAST_WINDOW_HOURS,
+                "summary": _summary_json(summary),
+                "points": [_forecast_point_json(p) for p in points],
+            },
+        }
+
+    @app.get("/outside")
+    def outside() -> dict[str, Any]:
+        return outside_payload()
+
+    @app.get("/outside/measurements")
+    def outside_measurements(
+        from_: str | None = Query(default=None, alias="from"),
+        to: str | None = None,
+        limit: int = Query(default=5000, ge=1, le=100_000),
+    ) -> dict[str, Any]:
+        start = parse_iso(from_) if from_ else None
+        end = parse_iso(to) if to else None
+        rows = db.list_outside_readings(start=start, end=end, limit=limit)
+        return {
+            "count": len(rows),
+            "measurements": [_outside_reading_json(r) for r in rows],
+        }
+
+    @app.post("/outside/refresh")
+    def refresh_outside(_: None = Depends(require_write_token)) -> dict[str, Any]:
+        if weather is None:
+            raise HTTPException(status_code=409, detail="Weather polling is disabled")
+        snapshot = weather.refresh()
+        if snapshot.reading is None:
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "message": "No weather service returned a usable reading",
+                    "providers": snapshot.providers,
+                },
+            )
+        return outside_payload()
+
     @app.get("/settings")
     def get_settings() -> dict[str, Any]:
         return _typed_settings(db.get_settings())
@@ -193,6 +368,37 @@ def create_app(cfg: AppConfig | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail="humidity_min must be < humidity_max")
         if t_min >= t_max:
             raise HTTPException(status_code=400, detail="temp_min must be < temp_max")
+
+        for key in ("quiet_hours_start", "quiet_hours_end"):
+            if key in updates:
+                parsed = parse_hhmm(updates[key])
+                if parsed is None:
+                    raise HTTPException(
+                        status_code=400, detail=f"{key} must be a 24h time like '23:00'"
+                    )
+                updates[key] = format_hhmm(parsed)
+
+        q_start = updates.get("quiet_hours_start", current.get("quiet_hours_start"))
+        q_end = updates.get("quiet_hours_end", current.get("quiet_hours_end"))
+        if q_start and q_end and q_start == q_end:
+            raise HTTPException(
+                status_code=400, detail="quiet_hours_start and quiet_hours_end must differ"
+            )
+
+        if "quiet_hours_timezone" in updates:
+            tz_name = str(updates["quiet_hours_timezone"]).strip()
+            if tz_name:
+                try:
+                    ZoneInfo(tz_name)
+                except (ZoneInfoNotFoundError, ValueError) as exc:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Unknown timezone '{tz_name}'; use an IANA name like Europe/Berlin",
+                    ) from exc
+            updates["quiet_hours_timezone"] = tz_name
+
+        if "quiet_hours_enabled" in updates:
+            updates["quiet_hours_enabled"] = "true" if updates["quiet_hours_enabled"] else "false"
 
         return _typed_settings(db.update_settings(updates))
 

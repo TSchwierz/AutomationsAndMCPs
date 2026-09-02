@@ -27,6 +27,18 @@ class AppConfig:
     temp_max: float
     sustain_minutes: int
     alert_cooldown_minutes: int
+    quiet_hours_enabled: bool
+    quiet_hours_start: str
+    quiet_hours_end: str
+    quiet_hours_timezone: str
+    weather_enabled: bool
+    latitude: float
+    longitude: float
+    weather_poll_interval_minutes: int
+    weather_alert_max_age_minutes: int
+    weather_forecast_hours: int
+    weather_request_timeout_seconds: float
+    openweathermap_api_key: str
 
 
 def _resolve_db_path(raw: str) -> Path:
@@ -54,6 +66,8 @@ def load_config(path: Path | None = None) -> AppConfig:
     collector = raw.get("collector", {})
     ntfy = raw.get("ntfy", {})
     defaults = raw.get("defaults", {})
+    quiet_hours = raw.get("quiet_hours", {})
+    weather = raw.get("weather", {})
 
     return AppConfig(
         host=str(server.get("host", "0.0.0.0")),
@@ -72,4 +86,22 @@ def load_config(path: Path | None = None) -> AppConfig:
         temp_max=float(defaults.get("temp_max", 24)),
         sustain_minutes=int(defaults.get("sustain_minutes", 30)),
         alert_cooldown_minutes=int(defaults.get("alert_cooldown_minutes", 120)),
+        quiet_hours_enabled=bool(quiet_hours.get("enabled", False)),
+        quiet_hours_start=str(quiet_hours.get("start", "23:00")),
+        quiet_hours_end=str(quiet_hours.get("end", "08:00")),
+        quiet_hours_timezone=str(quiet_hours.get("timezone", "")),
+        weather_enabled=bool(weather.get("enabled", True)),
+        latitude=float(weather.get("latitude", 51.2277)),
+        longitude=float(weather.get("longitude", 6.7735)),
+        weather_poll_interval_minutes=max(
+            5, int(weather.get("poll_interval_minutes", 60))
+        ),
+        weather_alert_max_age_minutes=max(
+            1, int(weather.get("alert_max_age_minutes", 30))
+        ),
+        weather_forecast_hours=max(4, min(int(weather.get("forecast_hours", 12)), 24)),
+        weather_request_timeout_seconds=float(
+            weather.get("request_timeout_seconds", 10)
+        ),
+        openweathermap_api_key=str(weather.get("openweathermap_api_key", "")),
     )

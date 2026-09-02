@@ -5,7 +5,15 @@ from datetime import timedelta
 
 import httpx
 
-from .db import ClimateDB, Measurement, parse_iso, to_iso, utc_now
+from .db import ClimateDB, Measurement, OutsideReading, parse_iso, to_iso, utc_now
+from .quiet_hours import QuietHours
+from .weather import (
+    WeatherService,
+    condition_label,
+    dew_point_c,
+    ventilation_advice,
+    wind_label,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,13 +76,56 @@ def publish_ntfy(
         return False
 
 
-def evaluate_alerts(db: ClimateDB, measurement: Measurement) -> list[str]:
+def describe_outside(reading: OutsideReading | None, measurement: Measurement) -> str:
+    """The outside block appended to an alert, including a ventilation hint."""
+    if reading is None:
+        return "Outside conditions unavailable."
+
+    parts = [f"{reading.temperature_c:.1f}°C", f"{reading.humidity_pct:.0f}% RH"]
+    if reading.condition:
+        parts.append(condition_label(reading.condition))
+    gust = wind_label(reading.wind_kph)
+    if gust:
+        parts.append(f"{gust} {reading.wind_kph:.0f} km/h")
+    age_minutes = int((utc_now() - reading.ts).total_seconds() // 60)
+    freshness = f", {age_minutes} min old" if age_minutes >= 5 else ""
+
+    indoor_dew = dew_point_c(measurement.temperature_c, measurement.humidity_pct)
+    advice = ventilation_advice(indoor_dew, reading.dew_point_c)
+    return (
+        f"Outside: {', '.join(parts)} "
+        f"(dew point {reading.dew_point_c:.1f}°C{freshness}). {advice['reason']}"
+        if reading.dew_point_c is not None
+        else f"Outside: {', '.join(parts)}{freshness}. {advice['reason']}"
+    )
+
+
+def evaluate_alerts(
+    db: ClimateDB,
+    measurement: Measurement,
+    weather: WeatherService | None = None,
+) -> list[str]:
     """Update sustain state and notify when a breach lasts long enough."""
     settings = db.get_settings()
     sustain = timedelta(minutes=_as_int(settings, "sustain_minutes", 30))
     cooldown = timedelta(minutes=_as_int(settings, "alert_cooldown_minutes", 120))
+    quiet_hours = QuietHours.from_settings(settings)
     now = utc_now()
+    quiet = quiet_hours.is_quiet(now)
     sent: list[str] = []
+
+    outside: OutsideReading | None = None
+    outside_loaded = False
+
+    def outside_block() -> str:
+        """Fetched at most once per evaluation, and only if an alert goes out."""
+        nonlocal outside, outside_loaded
+        if weather is None:
+            return ""
+        if not outside_loaded:
+            outside = weather.reading_for_alert()
+            outside_loaded = True
+        return "\n" + describe_outside(outside, measurement)
 
     for key, field, op, threshold_key, label in CONDITIONS:
         value = getattr(measurement, field)
@@ -106,12 +157,23 @@ def evaluate_alerts(db: ClimateDB, measurement: Measurement) -> list[str]:
             if now - last < cooldown:
                 continue
 
+        if quiet:
+            # last_alerted_at stays untouched, so the alert fires on the first
+            # sample after the window ends if the breach is still going.
+            logger.info(
+                "Quiet hours (%s) active; suppressing alert: %s",
+                quiet_hours.describe(),
+                key,
+            )
+            continue
+
         unit = "% RH" if field == "humidity_pct" else "°C"
         minutes = int(duration.total_seconds() // 60)
         message = (
             f"{label}: {value:.1f}{unit} for {minutes} min "
             f"(threshold {threshold:g}{unit}). "
             f"Studio climate out of target band."
+            f"{outside_block()}"
         )
         ok = publish_ntfy(
             server=settings.get("ntfy_server", "https://ntfy.sh"),

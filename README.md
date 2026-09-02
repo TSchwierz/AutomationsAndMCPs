@@ -4,6 +4,7 @@ LAN-only temperature and humidity monitor for a studio: mold risk + PLA filament
 
 - **Raspberry Pi (Python):** KY-015 / DHT11 collector → SQLite → ntfy alerts → FastAPI on port `8787`
 - **PC (Node.js):** local Vite/React dashboard for charts and remote band settings
+- **Outside conditions:** hourly average of three weather services, for indoor/outdoor comparison and a 4-hour outlook
 
 Nothing is exposed to the public internet. The PC talks to the Pi over the same Wi‑Fi.
 
@@ -56,6 +57,62 @@ sudo systemctl enable --now studio-climate
 3. Set `ntfy.topic` in `config.toml` (or via the dashboard **Target bands** form).
 4. Alerts fire after `sustain_minutes` outside the band (default 30), with `alert_cooldown_minutes` between repeats.
 
+### Quiet hours
+
+Notifications are held back during the `[quiet_hours]` window in `config.toml` (default 23:00–08:00, so nothing buzzes overnight):
+
+```toml
+[quiet_hours]
+enabled = true
+start = "23:00"
+end = "08:00"
+# IANA zone, e.g. "Europe/Berlin". Empty = the Pi's own local time.
+timezone = ""
+```
+
+Readings and breach tracking continue as normal — only the ntfy push is skipped. If a breach is still active when the window ends, the alert goes out on the next sample. The window may wrap past midnight, and it is editable from the dashboard.
+
+## Outside conditions
+
+Outdoor temperature and humidity come from three services queried in parallel and averaged, so one flaky or offline service degrades the reading instead of losing it:
+
+| Service | Key needed | Notes |
+| --- | --- | --- |
+| [Open-Meteo](https://open-meteo.com/) | no | Includes DWD ICON; free for non-commercial use |
+| [OpenWeatherMap](https://openweathermap.org/) | yes | Skipped when `openweathermap_api_key` is empty |
+| [Bright Sky](https://brightsky.dev/) | no | Official DWD data (MOSMIX + SYNOP observations) |
+
+Numeric values are averaged over whichever services answered; the weather condition is a majority vote, with the more disruptive condition winning a tie. Bright Sky's hourly forecast reports no relative humidity, so it is derived from its dew point via the Magnus formula.
+
+The collector polls on its own thread every `poll_interval_minutes` (default 60) and stores both the averaged reading and a 12-hour hourly outlook. An outgoing alert also carries the outside conditions: it reuses the stored reading when it is younger than `alert_max_age_minutes`, otherwise it fetches fresh before sending.
+
+Because indoor and outdoor dew points are both known, alerts and the dashboard say whether opening a window would actually help:
+
+```
+Humidity high — mold risk: 68.0% RH for 90 min (threshold 55% RH). Studio climate out of target band.
+Outside: 20.4°C, 58% RH, cloudy (dew point 11.8°C). Outside air is drier — dew point 3.5°C below inside. Airing out removes moisture.
+```
+
+Configure the location and services in `config.toml`:
+
+```toml
+[weather]
+enabled = true
+latitude = 51.2277
+longitude = 6.7735
+poll_interval_minutes = 60
+# On an alert, reuse the stored reading if younger than this; else refetch.
+alert_max_age_minutes = 30
+forecast_hours = 12
+request_timeout_seconds = 10
+# Optional — leave empty to average over Open-Meteo and Bright Sky only.
+openweathermap_api_key = ""
+```
+
+API keys stay in `config.toml` and are never returned by the API. Set `enabled = false` for a Pi without internet access; the dashboard then hides the outdoor cards.
+
+The dashboard shows an **Outside** card beside **Now**, a **Next 4 hours** strip highlighting the hour the weather is expected to turn, and dashed outdoor lines on the chart. Click a legend entry to hide a series.
+
 ## Quick start — PC dashboard
 
 ```bash
@@ -77,7 +134,10 @@ Open http://localhost:5173
 | GET | `/current` | Latest reading + in/out of band |
 | GET | `/measurements?from=&to=&limit=` | History (ISO timestamps) |
 | GET | `/stats?from=&to=` | min/max/avg |
-| GET | `/settings` | Bands, ntfy, intervals |
+| GET | `/outside` | Averaged outdoor reading, indoor/outdoor comparison, next 4 h outlook |
+| GET | `/outside/measurements?from=&to=&limit=` | Outdoor history |
+| POST | `/outside/refresh` | Force a poll now; send header `X-API-Token` if configured |
+| GET | `/settings` | Bands, ntfy, intervals, quiet hours |
 | PUT | `/settings` | Update bands; send header `X-API-Token` if configured |
 
 Default bands: humidity 40–55% RH, temperature 18–24 °C (editable).
