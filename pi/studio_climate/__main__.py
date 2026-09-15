@@ -11,16 +11,24 @@ if str(_PI_ROOT) not in sys.path:
     sys.path.insert(0, str(_PI_ROOT))
 
 from studio_climate.api import run_api
-from studio_climate.collector import run_collector
+from studio_climate.advisor import AdvisorStore
+from studio_climate.briefing import write_briefing
+from studio_climate.collector import default_settings, run_collector
 from studio_climate.config import load_config
+from studio_climate.db import ClimateDB
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Studio Climate Monitor")
     parser.add_argument(
         "command",
-        choices=("collector", "api", "all"),
-        help="collector=sensor loop; api=LAN FastAPI; all=both (dev helper)",
+        choices=("collector", "api", "all", "briefing"),
+        help="collector=sensor loop; api=LAN FastAPI; all=both; briefing=weekly JSON",
+    )
+    parser.add_argument(
+        "--week",
+        default=None,
+        help="ISO week for briefing, e.g. 2026-W38 (default: current UTC week)",
     )
     parser.add_argument(
         "--config",
@@ -42,6 +50,12 @@ def main(argv: list[str] | None = None) -> int:
         run_collector(cfg)
     elif args.command == "api":
         run_api(cfg)
+    elif args.command == "briefing":
+        db = ClimateDB(cfg.db_path)
+        db.init_schema(default_settings(cfg))
+        store = AdvisorStore(cfg.advisor_path)
+        path = write_briefing(db, store, week=args.week)
+        print(path)
     else:
         import threading
 

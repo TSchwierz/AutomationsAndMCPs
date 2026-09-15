@@ -43,6 +43,7 @@ class AppConfig:
     weather_forecast_hours: int
     weather_request_timeout_seconds: float
     openweathermap_api_key: str
+    advisor_path: Path
 
 
 def _resolve_db_path(raw: str) -> Path:
@@ -72,12 +73,16 @@ def load_config(path: Path | None = None) -> AppConfig:
     defaults = raw.get("defaults", {})
     quiet_hours = raw.get("quiet_hours", {})
     weather = raw.get("weather", {})
+    advisor = raw.get("advisor", {})
+    db_path = _resolve_db_path(str(database.get("path", "data/climate.db")))
+    advisor_raw = str(advisor.get("path", "")).strip()
+    advisor_path = _resolve_db_path(advisor_raw) if advisor_raw else db_path.parent / "advisor"
 
     return AppConfig(
         host=str(server.get("host", "0.0.0.0")),
         port=int(server.get("port", 8787)),
         api_token=str(server.get("api_token", "")),
-        db_path=_resolve_db_path(str(database.get("path", "data/climate.db"))),
+        db_path=db_path,
         sample_interval_seconds=int(collector.get("sample_interval_seconds", 60)),
         gpio_pin=int(collector.get("gpio_pin", 23)),
         mock_sensor=bool(collector.get("mock_sensor", False)),
@@ -112,4 +117,5 @@ def load_config(path: Path | None = None) -> AppConfig:
             weather.get("request_timeout_seconds", 10)
         ),
         openweathermap_api_key=str(weather.get("openweathermap_api_key", "")),
+        advisor_path=advisor_path,
     )

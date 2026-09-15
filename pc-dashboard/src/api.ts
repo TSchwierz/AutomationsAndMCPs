@@ -260,3 +260,49 @@ export function updateSettings(partial: Partial<Settings>) {
     body: JSON.stringify(partial),
   })
 }
+
+export type AdvisorContext = {
+  weeks: string[]
+  info: string
+  strategies: string
+  anomalies: string
+  live: unknown
+  pack: string
+  truncated: boolean
+}
+
+export function fetchAdvisorContext() {
+  return request<AdvisorContext>('/advisor/context')
+}
+
+export function fetchAdvisorMarkdown(kind: 'info' | 'strategies') {
+  return request<{ markdown: string }>(`/advisor/${kind}`)
+}
+
+export function updateAdvisorMarkdown(kind: 'info' | 'strategies', markdown: string) {
+  return request<{ markdown: string }>(`/advisor/${kind}`, {
+    method: 'PUT',
+    body: JSON.stringify({ markdown }),
+  })
+}
+
+export type ChatTurn = { role: 'user' | 'assistant'; content: string }
+
+export async function sendAdviceChat(messages: ChatTurn[]) {
+  const response = await fetch('/advice/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages }),
+  })
+  const text = await response.text()
+  let body: { reply?: string; weeks?: string[]; error?: string } = {}
+  try {
+    body = JSON.parse(text) as { reply?: string; weeks?: string[]; error?: string }
+  } catch {
+    throw new Error(text || `${response.status} ${response.statusText}`)
+  }
+  if (!response.ok || !body.reply) {
+    throw new Error(body.error || text || `${response.status} ${response.statusText}`)
+  }
+  return { reply: body.reply, weeks: body.weeks ?? [] }
+}

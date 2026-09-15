@@ -9,8 +9,13 @@ import {
   fetchSettings,
   fetchStats,
   getApiBase,
+  sendAdviceChat,
+  updateAdvisorMarkdown,
+  fetchAdvisorMarkdown,
+  fetchAdvisorContext,
   updateIncident,
   updateSettings,
+  type ChatTurn,
   type CurrentResponse,
   type Incident,
   type Measurement,
@@ -93,6 +98,14 @@ export default function App() {
   const [draftTags, setDraftTags] = useState<Record<number, string>>({})
   const [draftNotes, setDraftNotes] = useState<Record<number, string>>({})
   const [taggingId, setTaggingId] = useState<number | null>(null)
+  const [chat, setChat] = useState<ChatTurn[]>([])
+  const [chatInput, setChatInput] = useState('')
+  const [chatting, setChatting] = useState(false)
+  const [advisorWeeks, setAdvisorWeeks] = useState<string[]>([])
+  const [showNotes, setShowNotes] = useState(false)
+  const [infoMd, setInfoMd] = useState('')
+  const [strategiesMd, setStrategiesMd] = useState('')
+  const [notesSaving, setNotesSaving] = useState(false)
   const [form, setForm] = useState<Partial<Settings>>({})
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -159,6 +172,14 @@ export default function App() {
     const id = window.setInterval(() => void load(), 30_000)
     return () => window.clearInterval(id)
   }, [load])
+
+  useEffect(() => {
+    void fetchAdvisorContext()
+      .then((ctx) => setAdvisorWeeks(ctx.weeks))
+      .catch(() => {
+        /* Pi without advisor routes yet should not take down the dashboard. */
+      })
+  }, [])
 
   const overall = current?.status?.overall ?? 'unknown'
   const statusLabel = useMemo(() => {
@@ -233,6 +254,60 @@ export default function App() {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setTaggingId(null)
+    }
+  }
+
+  async function onChat(e: FormEvent) {
+    e.preventDefault()
+    const text = chatInput.trim()
+    if (!text || chatting) return
+    const next: ChatTurn[] = [...chat, { role: 'user', content: text }]
+    setChat(next)
+    setChatInput('')
+    setChatting(true)
+    setError(null)
+    try {
+      const result = await sendAdviceChat(next)
+      setChat([...next, { role: 'assistant', content: result.reply }])
+      if (result.weeks.length) setAdvisorWeeks(result.weeks)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+      setChat(next)
+    } finally {
+      setChatting(false)
+    }
+  }
+
+  async function openNotes() {
+    const next = !showNotes
+    setShowNotes(next)
+    if (!next) return
+    try {
+      const [info, strat] = await Promise.all([
+        fetchAdvisorMarkdown('info'),
+        fetchAdvisorMarkdown('strategies'),
+      ])
+      setInfoMd(info.markdown)
+      setStrategiesMd(strat.markdown)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  async function saveNotesFiles() {
+    setNotesSaving(true)
+    setError(null)
+    try {
+      const [info, strat] = await Promise.all([
+        updateAdvisorMarkdown('info', infoMd),
+        updateAdvisorMarkdown('strategies', strategiesMd),
+      ])
+      setInfoMd(info.markdown)
+      setStrategiesMd(strat.markdown)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setNotesSaving(false)
     }
   }
 
@@ -532,6 +607,72 @@ export default function App() {
               </li>
             ))}
           </ul>
+        )}
+      </section>
+
+      <section className="card advisor-card">
+        <h2>Advisor</h2>
+        <p className="lede-sm">
+          Chat uses weekly reports plus your room notes. The model runs on this PC through Vite
+          (set <code>MISTRAL_API_KEY</code> in <code>.env</code>). Live ntfy alerts stay local.
+        </p>
+        <p className="meta">
+          {advisorWeeks.length > 0
+            ? `Briefings in context: ${advisorWeeks.join(', ')}`
+            : 'No weekly briefings yet — run python -m studio_climate briefing on the Pi.'}
+        </p>
+        <div className="chat-log">
+          {chat.length === 0 && (
+            <p className="chart-empty incidents-empty">
+              Ask how to air out, what last week&apos;s spikes mean, or whether PLA is at risk.
+            </p>
+          )}
+          {chat.map((turn, index) => (
+            <p key={`${turn.role}-${index}`} className={`chat-bubble ${turn.role}`}>
+              {turn.content}
+            </p>
+          ))}
+        </div>
+        <form className="chat-form" onSubmit={(e) => void onChat(e)}>
+          <input
+            type="text"
+            value={chatInput}
+            onChange={(e) => setChatInput(e.target.value)}
+            placeholder="Ask about the studio climate…"
+            disabled={chatting}
+          />
+          <button type="submit" disabled={chatting || !chatInput.trim()}>
+            {chatting ? 'Thinking…' : 'Send'}
+          </button>
+        </form>
+        <label className="toggle notes-toggle">
+          <input type="checkbox" checked={showNotes} onChange={() => void openNotes()} />
+          Edit room notes and strategies
+        </label>
+        {showNotes && (
+          <div className="notes-edit">
+            <label>
+              info.md
+              <textarea
+                rows={8}
+                value={infoMd}
+                onChange={(e) => setInfoMd(e.target.value)}
+              />
+            </label>
+            <label>
+              strategies.md
+              <textarea
+                rows={8}
+                value={strategiesMd}
+                onChange={(e) => setStrategiesMd(e.target.value)}
+              />
+            </label>
+            <div className="form-actions">
+              <button type="button" disabled={notesSaving} onClick={() => void saveNotesFiles()}>
+                {notesSaving ? 'Saving…' : 'Save notes'}
+              </button>
+            </div>
+          </div>
         )}
       </section>
 

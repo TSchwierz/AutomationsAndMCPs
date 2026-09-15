@@ -6,6 +6,7 @@ import threading
 import time
 from typing import Any
 
+from .advisor import AdvisorStore
 from .alerts import evaluate_alerts
 from .config import AppConfig, load_config
 from .db import ClimateDB
@@ -69,6 +70,8 @@ def run_collector(cfg: AppConfig | None = None) -> None:
     cfg = cfg or load_config()
     db = ClimateDB(cfg.db_path)
     db.init_schema(default_settings(cfg))
+    advisor = AdvisorStore(cfg.advisor_path)
+    advisor.ensure()
 
     sensor = create_sensor(mock=cfg.mock_sensor, gpio_pin=cfg.gpio_pin)
     stop_event = threading.Event()
@@ -125,7 +128,7 @@ def run_collector(cfg: AppConfig | None = None) -> None:
                 measurement.humidity_pct,
             )
             evaluate_alerts(db, measurement, weather=weather)
-            evaluate_incidents(db, measurement, weather=weather)
+            evaluate_incidents(db, measurement, weather=weather, advisor=advisor)
         except SensorError as exc:
             logger.warning("Sensor read failed: %s", exc)
         except Exception:  # noqa: BLE001

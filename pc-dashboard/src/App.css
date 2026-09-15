@@ -506,3 +506,93 @@
   opacity: 0.6;
   cursor: wait;
 }
+
+.advisor-card .meta {
+  margin: 0 0 0.75rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.chat-log {
+  display: grid;
+  gap: 0.55rem;
+  max-height: 22rem;
+  overflow: auto;
+  margin-bottom: 0.75rem;
+}
+
+.chat-bubble {
+  margin: 0;
+  padding: 0.65rem 0.8rem;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  white-space: pre-wrap;
+}
+
+.chat-bubble.user {
+  background: rgba(42, 111, 122, 0.1);
+}
+
+.chat-bubble.assistant {
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.chat-form {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.chat-form input {
+  flex: 1;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.55rem 0.65rem;
+  background: #fff;
+  color: var(--ink);
+}
+
+.chat-form button {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.55rem 1.1rem;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.chat-form button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.notes-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.notes-edit {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 0.85rem;
+}
+
+.notes-edit label {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.notes-edit textarea {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.55rem 0.65rem;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+}

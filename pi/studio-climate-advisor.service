@@ -1,0 +1,14 @@
+[Unit]
+Description=Studio Climate weekly advisor briefing
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pi
+WorkingDirectory=/home/pi/studio-climate/pi/data/advisor
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/pi/studio-climate/pi/scripts/weekly_advisor.sh
+
+[Install]
+WantedBy=multi-user.target

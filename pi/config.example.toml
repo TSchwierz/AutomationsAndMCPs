@@ -69,3 +69,7 @@ incident_humidity_delta = 6
 incident_temp_delta = 1.5
 # Minutes between repeat change-warning notifications.
 incident_cooldown_minutes = 20
+
+# Live notes + weekly JSON for the PC dashboard advisor chat (gitignored).
+[advisor]
+path = "data/advisor"

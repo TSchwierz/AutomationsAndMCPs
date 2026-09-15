@@ -9,6 +9,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from .advisor import AdvisorStore
 from .collector import create_weather_service, default_settings
 from .config import AppConfig, load_config
 from .db import (
@@ -56,6 +57,10 @@ class SettingsUpdate(BaseModel):
     quiet_hours_start: str | None = None
     quiet_hours_end: str | None = None
     quiet_hours_timezone: str | None = None
+
+
+class MarkdownUpdate(BaseModel):
+    markdown: str
 
 
 class IncidentUpdate(BaseModel):
@@ -193,6 +198,8 @@ def create_app(cfg: AppConfig | None = None) -> FastAPI:
     cfg = cfg or load_config()
     db = ClimateDB(cfg.db_path)
     db.init_schema(default_settings(cfg))
+    advisor = AdvisorStore(cfg.advisor_path)
+    advisor.ensure()
 
     app = FastAPI(title="Studio Climate Monitor", version="0.1.0")
     app.add_middleware(
@@ -537,6 +544,53 @@ def create_app(cfg: AppConfig | None = None) -> FastAPI:
         if incident is None:
             raise HTTPException(status_code=404, detail="Incident not found")
         return _incident_json(incident)
+
+    @app.get("/advisor/context")
+    def advisor_context() -> dict[str, Any]:
+        settings = _typed_settings(db.get_settings())
+        measurement = db.latest_measurement()
+        open_incident = db.get_open_incident()
+        live = {
+            "measurement": (
+                None
+                if measurement is None
+                else {
+                    "ts": to_iso(measurement.ts),
+                    "temperature_c": measurement.temperature_c,
+                    "humidity_pct": measurement.humidity_pct,
+                }
+            ),
+            "rolling": _rolling_from_db(db, settings),
+            "open_incident": None if open_incident is None else _incident_json(open_incident),
+        }
+        return advisor.context_pack(live=live)
+
+    @app.get("/advisor/reports")
+    def advisor_reports() -> dict[str, Any]:
+        ids = advisor.list_report_ids()
+        return {"count": len(ids), "weeks": ids}
+
+    @app.get("/advisor/info")
+    def get_advisor_info() -> dict[str, str]:
+        return {"markdown": advisor.read_markdown("info.md")}
+
+    @app.get("/advisor/strategies")
+    def get_advisor_strategies() -> dict[str, str]:
+        return {"markdown": advisor.read_markdown("strategies.md")}
+
+    @app.put("/advisor/info")
+    def put_advisor_info(
+        body: MarkdownUpdate,
+        _: None = Depends(require_write_token),
+    ) -> dict[str, str]:
+        return {"markdown": advisor.write_markdown("info.md", body.markdown)}
+
+    @app.put("/advisor/strategies")
+    def put_advisor_strategies(
+        body: MarkdownUpdate,
+        _: None = Depends(require_write_token),
+    ) -> dict[str, str]:
+        return {"markdown": advisor.write_markdown("strategies.md", body.markdown)}
 
     return app
 

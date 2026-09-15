@@ -4,6 +4,7 @@ import logging
 from datetime import timedelta
 from typing import Any, Sequence
 
+from .advisor import AdvisorStore
 from .alerts import _as_float, _as_int, describe_outside, publish_ntfy
 from .db import (
     DEFAULT_INCIDENT_TAGS,
@@ -24,6 +25,7 @@ DEFAULT_HUMIDITY_DELTA = 6.0
 DEFAULT_TEMP_DELTA = 1.5
 DEFAULT_INCIDENT_COOLDOWN_MINUTES = 20
 SETTLE_FRACTION = 0.5
+ANOMALY_LOOKBACK_DAYS = 14
 
 
 def _avg(values: Sequence[float]) -> float:
@@ -186,10 +188,53 @@ def describe_incident(incident: Incident, sample_interval_seconds: int) -> str:
     )
 
 
+def is_irregular(db: ClimateDB, incident: Incident) -> bool:
+    """Untagged close with no same metric+direction event in the last 14 days."""
+    if incident.tags:
+        return False
+    lookback = incident.started_at - timedelta(days=ANOMALY_LOOKBACK_DAYS)
+    previous = db.list_incidents(start=lookback, end=incident.started_at, limit=10_000)
+    for other in previous:
+        if other.id == incident.id:
+            continue
+        if other.metric == incident.metric and other.direction == incident.direction:
+            return False
+    return True
+
+
+def maybe_note_anomaly(
+    db: ClimateDB,
+    incident: Incident,
+    settings: dict[str, str],
+    advisor: AdvisorStore | None,
+) -> bool:
+    if advisor is None or not is_irregular(db, incident):
+        return False
+    advisor.append_anomaly(incident)
+    quiet_hours = QuietHours.from_settings(settings)
+    if quiet_hours.is_quiet(utc_now()):
+        logger.info("Quiet hours active; skipping anomaly ntfy for incident %s", incident.id)
+        return True
+    publish_ntfy(
+        server=settings.get("ntfy_server", "https://ntfy.sh"),
+        topic=settings.get("ntfy_topic", ""),
+        token=settings.get("ntfy_token", ""),
+        title="Unusual studio climate shift",
+        message=(
+            f"Untagged {incident.metric} {incident.direction} with no similar event "
+            f"in {ANOMALY_LOOKBACK_DAYS} days. Ask the dashboard advisor."
+        ),
+        priority=2,
+        tags="grey_question,thought_balloon",
+    )
+    return True
+
+
 def evaluate_incidents(
     db: ClimateDB,
     measurement: Measurement,
     weather: WeatherService | None = None,
+    advisor: AdvisorStore | None = None,
 ) -> list[int]:
     """Open or update a climate-change incident from rolling-window deltas."""
     settings = db.get_settings()
@@ -279,6 +324,9 @@ def evaluate_incidents(
         if settled and not humidity_hit and not temp_hit:
             db.close_incident(open_inc.id, now)
             logger.info("Incident %s closed", open_inc.id)
+            closed = db.get_incident(open_inc.id)
+            if closed is not None:
+                maybe_note_anomaly(db, closed, settings, advisor)
         return changed_ids
 
     if not humidity_hit and not temp_hit:

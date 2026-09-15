@@ -48,6 +48,10 @@ Edit paths/user in `pi/studio-climate.service`, then:
 sudo cp studio-climate.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now studio-climate
+# Optional weekly briefing + Vibe:
+sudo cp studio-climate-advisor.service studio-climate-advisor.timer /etc/systemd/system/
+sudo chmod +x scripts/weekly_advisor.sh
+sudo systemctl enable --now studio-climate-advisor.timer
 ```
 
 ### ntfy
@@ -120,6 +124,7 @@ cd pc-dashboard
 cp .env.example .env
 # Set VITE_PI_API_BASE to your Pi, e.g. http://raspberrypi.local:8787
 # Set VITE_API_TOKEN to the same value as pi config api_token
+# Optional: MISTRAL_API_KEY for the Advisor chat (server-only, not VITE_)
 npm install
 npm run dev
 ```
@@ -143,10 +148,38 @@ Open http://localhost:5173
 | POST | `/outside/refresh` | Force a poll now; send header `X-API-Token` if configured |
 | GET | `/settings` | Bands, ntfy, intervals, quiet hours |
 | PUT | `/settings` | Update bands; send header `X-API-Token` if configured |
+| GET | `/advisor/context` | Room notes, strategies, last weekly reports, anomalies, live stub |
+| GET | `/advisor/reports` | ISO week ids of stored briefings |
+| GET | `/advisor/info` | `info.md` |
+| PUT | `/advisor/info` | Replace `info.md`; send `X-API-Token` if configured |
+| GET | `/advisor/strategies` | `strategies.md` |
+| PUT | `/advisor/strategies` | Replace `strategies.md`; send `X-API-Token` if configured |
 
 Default bands: humidity 40–55% RH, temperature 18–24 °C (editable). Out-of-band cooldown defaults to 6 hours. Climate-shift warnings use the last 8 samples (~8 min at a 60 s interval) and fire when humidity moves by 6% RH or temperature by 1.5 °C versus the previous window.
 
-Tagged incidents stay in SQLite with the indoor/outdoor snapshot from when they opened, so a later exporter can send that history to an analyser.
+## Advisor (weekly reports + dashboard chat)
+
+The Pi writes a compact weekly JSON (no 1-minute samples) under `pi/data/advisor/reports/`. Room facts live in `info.md`; what you tried lives in `strategies.md`. Copy the templates from `pi/advisor/*.example.md` if the API has not created them yet.
+
+Sunday 03:00 (after you install the timer) runs `python -m studio_climate briefing` and, if [Vibe CLI](https://docs.mistral.ai/getting-started/quickstarts/vibe-code/install-cli) is on `PATH`, a **restricted** pass that may only edit `strategies.md` inside `data/advisor`. Chat never shells out to Vibe.
+
+On the PC, `npm run dev` exposes `POST /advice/chat` (Vite middleware). Put `MISTRAL_API_KEY` in `pc-dashboard/.env` **without** a `VITE_` prefix so the key never reaches the browser. The dashboard Advisor card loads Pi context and talks to Mistral from the PC.
+
+Weekly JSON and chat prompts include tagged events (showers, cooking). They go to Mistral when you chat or when the Vibe timer runs.
+
+```bash
+# Pi: write this week's briefing now
+python -m studio_climate briefing
+# optional: python -m studio_climate briefing --week 2026-W38
+
+# systemd timer
+sudo cp studio-climate-advisor.service studio-climate-advisor.timer /etc/systemd/system/
+sudo chmod +x scripts/weekly_advisor.sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now studio-climate-advisor.timer
+```
+
+Untagged climate shifts with no similar event in 14 days are appended to `anomalies.md` and may send a low-priority ntfy (“ask the advisor”). Band and shift warnings are unchanged.
 
 ## Local smoke test (no Pi / no sensor)
 
@@ -192,5 +225,6 @@ Or rsync/cron on the Pi to a NAS. Prefer keeping `data/` on a USB disk if you ha
 ```
 studio-climate/
   pi/                 Python collector + API
-  pc-dashboard/       Node.js Vite + React charts
+  pi/advisor/         Example info.md / strategies.md
+  pc-dashboard/       Node.js Vite/React charts + Advisor chat
 ```
