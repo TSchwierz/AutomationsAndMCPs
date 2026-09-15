@@ -9,6 +9,7 @@ from typing import Any
 from .alerts import evaluate_alerts
 from .config import AppConfig, load_config
 from .db import ClimateDB
+from .incidents import evaluate_incidents
 from .sensor import SensorError, create_sensor
 from .weather import WeatherService
 
@@ -23,6 +24,10 @@ def default_settings(cfg: AppConfig) -> dict[str, Any]:
         "temp_max": cfg.temp_max,
         "sustain_minutes": cfg.sustain_minutes,
         "alert_cooldown_minutes": cfg.alert_cooldown_minutes,
+        "rolling_window_points": cfg.rolling_window_points,
+        "incident_humidity_delta": cfg.incident_humidity_delta,
+        "incident_temp_delta": cfg.incident_temp_delta,
+        "incident_cooldown_minutes": cfg.incident_cooldown_minutes,
         "ntfy_server": cfg.ntfy_server,
         "ntfy_topic": cfg.ntfy_topic,
         "ntfy_token": cfg.ntfy_token,
@@ -120,6 +125,7 @@ def run_collector(cfg: AppConfig | None = None) -> None:
                 measurement.humidity_pct,
             )
             evaluate_alerts(db, measurement, weather=weather)
+            evaluate_incidents(db, measurement, weather=weather)
         except SensorError as exc:
             logger.warning("Sensor read failed: %s", exc)
         except Exception:  # noqa: BLE001

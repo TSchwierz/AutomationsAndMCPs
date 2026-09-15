@@ -27,6 +27,10 @@ class AppConfig:
     temp_max: float
     sustain_minutes: int
     alert_cooldown_minutes: int
+    rolling_window_points: int
+    incident_humidity_delta: float
+    incident_temp_delta: float
+    incident_cooldown_minutes: int
     quiet_hours_enabled: bool
     quiet_hours_start: str
     quiet_hours_end: str
@@ -85,7 +89,11 @@ def load_config(path: Path | None = None) -> AppConfig:
         temp_min=float(defaults.get("temp_min", 18)),
         temp_max=float(defaults.get("temp_max", 24)),
         sustain_minutes=int(defaults.get("sustain_minutes", 30)),
-        alert_cooldown_minutes=int(defaults.get("alert_cooldown_minutes", 120)),
+        alert_cooldown_minutes=int(defaults.get("alert_cooldown_minutes", 360)),
+        rolling_window_points=max(2, int(defaults.get("rolling_window_points", 8))),
+        incident_humidity_delta=float(defaults.get("incident_humidity_delta", 6)),
+        incident_temp_delta=float(defaults.get("incident_temp_delta", 1.5)),
+        incident_cooldown_minutes=int(defaults.get("incident_cooldown_minutes", 20)),
         quiet_hours_enabled=bool(quiet_hours.get("enabled", False)),
         quiet_hours_start=str(quiet_hours.get("start", "23:00")),
         quiet_hours_end=str(quiet_hours.get("end", "08:00")),

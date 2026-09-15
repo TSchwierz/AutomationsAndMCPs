@@ -15,11 +15,13 @@ from .db import (
     SETTING_KEYS,
     ClimateDB,
     ForecastPoint,
+    Incident,
     OutsideReading,
     parse_iso,
     to_iso,
     utc_now,
 )
+from .incidents import rolling_series, rolling_snapshot
 from .quiet_hours import format_hhmm, parse_bool, parse_hhmm
 from .sensor import band_status
 from .weather import (
@@ -42,6 +44,10 @@ class SettingsUpdate(BaseModel):
     temp_max: float | None = None
     sustain_minutes: int | None = Field(default=None, ge=1)
     alert_cooldown_minutes: int | None = Field(default=None, ge=1)
+    rolling_window_points: int | None = Field(default=None, ge=2, le=120)
+    incident_humidity_delta: float | None = Field(default=None, gt=0)
+    incident_temp_delta: float | None = Field(default=None, gt=0)
+    incident_cooldown_minutes: int | None = Field(default=None, ge=1)
     ntfy_server: str | None = None
     ntfy_topic: str | None = None
     ntfy_token: str | None = None
@@ -52,17 +58,26 @@ class SettingsUpdate(BaseModel):
     quiet_hours_timezone: str | None = None
 
 
+class IncidentUpdate(BaseModel):
+    tags: list[str] | None = None
+    notes: str | None = None
+
+
 def _typed_settings(raw: dict[str, str]) -> dict[str, Any]:
     float_keys = {
         "humidity_min",
         "humidity_max",
         "temp_min",
         "temp_max",
+        "incident_humidity_delta",
+        "incident_temp_delta",
     }
     int_keys = {
         "sustain_minutes",
         "alert_cooldown_minutes",
         "sample_interval_seconds",
+        "rolling_window_points",
+        "incident_cooldown_minutes",
     }
     bool_keys = {"quiet_hours_enabled"}
     out: dict[str, Any] = {}
@@ -127,6 +142,53 @@ def _summary_json(summary: dict[str, Any] | None) -> dict[str, Any] | None:
     return out
 
 
+def _incident_json(incident: Incident) -> dict[str, Any]:
+    return {
+        "id": incident.id,
+        "started_at": to_iso(incident.started_at),
+        "ended_at": to_iso(incident.ended_at) if incident.ended_at else None,
+        "open": incident.ended_at is None,
+        "metric": incident.metric,
+        "direction": incident.direction,
+        "window_points": incident.window_points,
+        "baseline_temp_c": incident.baseline_temp_c,
+        "baseline_humidity_pct": incident.baseline_humidity_pct,
+        "current_temp_c": incident.current_temp_c,
+        "current_humidity_pct": incident.current_humidity_pct,
+        "peak_temp_c": incident.peak_temp_c,
+        "peak_humidity_pct": incident.peak_humidity_pct,
+        "delta_temp_c": incident.delta_temp_c,
+        "delta_humidity_pct": incident.delta_humidity_pct,
+        "peak_delta_temp_c": incident.peak_delta_temp_c,
+        "peak_delta_humidity_pct": incident.peak_delta_humidity_pct,
+        "notified": incident.notified,
+        "notes": incident.notes,
+        "indoor_temp_c": incident.indoor_temp_c,
+        "indoor_humidity_pct": incident.indoor_humidity_pct,
+        "outdoor_temp_c": incident.outdoor_temp_c,
+        "outdoor_humidity_pct": incident.outdoor_humidity_pct,
+        "outdoor_condition": incident.outdoor_condition,
+        "outdoor_dew_point_c": incident.outdoor_dew_point_c,
+        "tags": incident.tags,
+    }
+
+
+def _rolling_from_db(db: ClimateDB, settings: dict[str, Any]) -> dict[str, Any] | None:
+    try:
+        window = max(2, int(settings.get("rolling_window_points", 8)))
+    except (TypeError, ValueError):
+        window = 8
+    recent = db.recent_measurements(window * 2)
+    snapshot = rolling_snapshot(recent, window)
+    if snapshot is None:
+        return None
+    snapshot["thresholds"] = {
+        "humidity_pct": settings.get("incident_humidity_delta", 6),
+        "temperature_c": settings.get("incident_temp_delta", 1.5),
+    }
+    return snapshot
+
+
 def create_app(cfg: AppConfig | None = None) -> FastAPI:
     cfg = cfg or load_config()
     db = ClimateDB(cfg.db_path)
@@ -167,6 +229,8 @@ def create_app(cfg: AppConfig | None = None) -> FastAPI:
     def current() -> dict[str, Any]:
         measurement = db.latest_measurement()
         settings = _typed_settings(db.get_settings())
+        rolling = _rolling_from_db(db, settings)
+        open_incident = db.get_open_incident()
         if measurement is None:
             return {
                 "measurement": None,
@@ -177,6 +241,8 @@ def create_app(cfg: AppConfig | None = None) -> FastAPI:
                     "temp_max": settings.get("temp_max"),
                 },
                 "status": {"overall": "unknown"},
+                "rolling": rolling,
+                "open_incident": None if open_incident is None else _incident_json(open_incident),
             }
         status = band_status(
             measurement.temperature_c,
@@ -200,6 +266,8 @@ def create_app(cfg: AppConfig | None = None) -> FastAPI:
                 "temp_max": settings.get("temp_max"),
             },
             "status": status,
+            "rolling": rolling,
+            "open_incident": None if open_incident is None else _incident_json(open_incident),
         }
 
     @app.get("/measurements")
@@ -401,6 +469,74 @@ def create_app(cfg: AppConfig | None = None) -> FastAPI:
             updates["quiet_hours_enabled"] = "true" if updates["quiet_hours_enabled"] else "false"
 
         return _typed_settings(db.update_settings(updates))
+
+    @app.get("/rolling-average")
+    def get_rolling_average(
+        from_: str | None = Query(default=None, alias="from"),
+        to: str | None = None,
+        window: int | None = Query(default=None, ge=2, le=120),
+        limit: int = Query(default=20_000, ge=1, le=100_000),
+    ) -> dict[str, Any]:
+        settings = _typed_settings(db.get_settings())
+        try:
+            configured = max(2, int(settings.get("rolling_window_points", 8)))
+        except (TypeError, ValueError):
+            configured = 8
+        size = window or configured
+        start = parse_iso(from_) if from_ else None
+        end = parse_iso(to) if to else None
+        rows = db.list_measurements(start=start, end=end, limit=limit)
+        snapshot = rolling_snapshot(rows, size)
+        if snapshot is not None:
+            snapshot["thresholds"] = {
+                "humidity_pct": settings.get("incident_humidity_delta", 6),
+                "temperature_c": settings.get("incident_temp_delta", 1.5),
+            }
+        return {
+            "window_points": size,
+            "count": len(rows),
+            "current": snapshot,
+            "series": rolling_series(rows, size),
+        }
+
+    @app.get("/incidents")
+    def get_incidents(
+        from_: str | None = Query(default=None, alias="from"),
+        to: str | None = None,
+        limit: int = Query(default=200, ge=1, le=10_000),
+        open_only: bool = False,
+    ) -> dict[str, Any]:
+        start = parse_iso(from_) if from_ else None
+        end = parse_iso(to) if to else None
+        rows = db.list_incidents(start=start, end=end, limit=limit, open_only=open_only)
+        return {
+            "count": len(rows),
+            "incidents": [_incident_json(item) for item in rows],
+        }
+
+    @app.get("/incidents/tags")
+    def get_incident_tags() -> dict[str, Any]:
+        return {"tags": db.list_tag_catalog()}
+
+    @app.patch("/incidents/{incident_id}")
+    def patch_incident(
+        incident_id: int,
+        body: IncidentUpdate,
+        _: None = Depends(require_write_token),
+    ) -> dict[str, Any]:
+        incident = db.get_incident(incident_id)
+        if incident is None:
+            raise HTTPException(status_code=404, detail="Incident not found")
+        updates = body.model_dump(exclude_none=True)
+        if not updates:
+            raise HTTPException(status_code=400, detail="No incident fields provided")
+        if "notes" in updates:
+            incident = db.set_incident_notes(incident_id, str(updates["notes"]))
+        if "tags" in updates:
+            incident = db.set_incident_tags(incident_id, updates["tags"])
+        if incident is None:
+            raise HTTPException(status_code=404, detail="Incident not found")
+        return _incident_json(incident)
 
     return app
 

@@ -55,7 +55,7 @@ sudo systemctl enable --now studio-climate
 1. Install the ntfy app on your phone.
 2. Subscribe to a hard-to-guess topic.
 3. Set `ntfy.topic` in `config.toml` (or via the dashboard **Target bands** form).
-4. Alerts fire after `sustain_minutes` outside the band (default 30), with `alert_cooldown_minutes` between repeats.
+4. Out-of-band alerts fire after `sustain_minutes` (default 30), with `alert_cooldown_minutes` between repeats (default 360 / 6 hours). Sudden shifts in the rolling average of the last `rolling_window_points` samples (default 8) open a **climate shift** incident and send a warning. Tag those in the dashboard.
 
 ### Quiet hours
 
@@ -131,16 +131,22 @@ Open http://localhost:5173
 | Method | Path | Notes |
 | --- | --- | --- |
 | GET | `/health` | Liveness |
-| GET | `/current` | Latest reading + in/out of band |
+| GET | `/current` | Latest reading, rolling average, in/out of band, open incident |
 | GET | `/measurements?from=&to=&limit=` | History (ISO timestamps) |
 | GET | `/stats?from=&to=` | min/max/avg |
+| GET | `/rolling-average?from=&to=&window=` | Current vs previous window, plus the rolling series |
+| GET | `/incidents?from=&to=&open_only=` | Detected climate-shift incidents |
+| GET | `/incidents/tags` | Suggested + custom labels |
+| PATCH | `/incidents/{id}` | Set `tags` and/or `notes`; send header `X-API-Token` if configured |
 | GET | `/outside` | Averaged outdoor reading, indoor/outdoor comparison, next 4 h outlook |
 | GET | `/outside/measurements?from=&to=&limit=` | Outdoor history |
 | POST | `/outside/refresh` | Force a poll now; send header `X-API-Token` if configured |
 | GET | `/settings` | Bands, ntfy, intervals, quiet hours |
 | PUT | `/settings` | Update bands; send header `X-API-Token` if configured |
 
-Default bands: humidity 40–55% RH, temperature 18–24 °C (editable).
+Default bands: humidity 40–55% RH, temperature 18–24 °C (editable). Out-of-band cooldown defaults to 6 hours. Climate-shift warnings use the last 8 samples (~8 min at a 60 s interval) and fire when humidity moves by 6% RH or temperature by 1.5 °C versus the previous window.
+
+Tagged incidents stay in SQLite with the indoor/outdoor snapshot from when they opened, so a later exporter can send that history to an analyser.
 
 ## Local smoke test (no Pi / no sensor)
 

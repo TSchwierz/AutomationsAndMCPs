@@ -55,6 +55,7 @@ def publish_ntfy(
     title: str,
     message: str,
     priority: int = 3,
+    tags: str = "thermometer,droplet",
 ) -> bool:
     if not topic:
         logger.debug("ntfy topic empty; skip notification")
@@ -63,7 +64,7 @@ def publish_ntfy(
     headers = {
         "Title": title,
         "Priority": str(priority),
-        "Tags": "thermometer,droplet",
+        "Tags": tags,
     }
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -108,7 +109,7 @@ def evaluate_alerts(
     """Update sustain state and notify when a breach lasts long enough."""
     settings = db.get_settings()
     sustain = timedelta(minutes=_as_int(settings, "sustain_minutes", 30))
-    cooldown = timedelta(minutes=_as_int(settings, "alert_cooldown_minutes", 120))
+    cooldown = timedelta(minutes=_as_int(settings, "alert_cooldown_minutes", 360))
     quiet_hours = QuietHours.from_settings(settings)
     now = utc_now()
     quiet = quiet_hours.is_quiet(now)

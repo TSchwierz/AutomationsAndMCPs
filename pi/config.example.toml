@@ -60,5 +60,12 @@ humidity_max = 55
 temp_min = 18
 temp_max = 24
 sustain_minutes = 30
-# Minutes between repeat alerts for the same condition
-alert_cooldown_minutes = 120
+# Minutes between repeat out-of-band alerts for the same condition (6 hours).
+alert_cooldown_minutes = 360
+# Rolling average of this many indoor samples; used to spot sudden climate shifts.
+rolling_window_points = 8
+# Fire a change incident when the current window differs from the previous by this much.
+incident_humidity_delta = 6
+incident_temp_delta = 1.5
+# Minutes between repeat change-warning notifications.
+incident_cooldown_minutes = 20

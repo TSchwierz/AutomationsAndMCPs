@@ -14,7 +14,7 @@ import {
 import 'chartjs-adapter-date-fns'
 import { Line } from 'react-chartjs-2'
 import { useMemo } from 'react'
-import type { Measurement } from './api'
+import type { Incident, Measurement } from './api'
 
 ChartJS.register(
   LinearScale,
@@ -38,6 +38,7 @@ type Gap = {
 declare module 'chart.js' {
   interface PluginOptionsByType<TType extends ChartType> {
     gapHighlight?: { gaps: Gap[] }
+    incidentMarkers?: { incidents: Incident[] }
   }
 }
 
@@ -150,6 +151,62 @@ const gapHighlight: Plugin<'line'> = {
   },
 }
 
+const incidentMarkers: Plugin<'line'> = {
+  id: 'incidentMarkers',
+  afterDatasetsDraw(chart, _args, opts) {
+    const incidents = opts?.incidents ?? []
+    const scale = chart.scales.x
+    if (!incidents.length || !scale) return
+
+    const { ctx, chartArea } = chart
+    ctx.save()
+    ctx.beginPath()
+    ctx.rect(chartArea.left, chartArea.top, chartArea.right - chartArea.left, chartArea.height)
+    ctx.clip()
+
+    for (const incident of incidents) {
+      const x = scale.getPixelForValue(new Date(incident.started_at).getTime())
+      if (x < chartArea.left - 4 || x > chartArea.right + 4) continue
+
+      ctx.strokeStyle = incident.open ? 'rgba(196, 92, 38, 0.85)' : 'rgba(196, 92, 38, 0.45)'
+      ctx.lineWidth = incident.open ? 2 : 1
+      ctx.setLineDash(incident.open ? [] : [3, 3])
+      ctx.beginPath()
+      ctx.moveTo(x, chartArea.top)
+      ctx.lineTo(x, chartArea.bottom)
+      ctx.stroke()
+      ctx.setLineDash([])
+
+      const label = incident.tags[0] || incident.metric
+      ctx.fillStyle = '#c45c26'
+      ctx.font = '600 10px system-ui, -apple-system, sans-serif'
+      ctx.textAlign = 'left'
+      ctx.textBaseline = 'top'
+      ctx.fillText(label, Math.min(x + 4, chartArea.right - 52), chartArea.top + 6)
+    }
+    ctx.restore()
+  },
+}
+
+function rollingPoints(
+  measurements: Measurement[],
+  window: number,
+  pick: (m: Measurement) => number,
+): { x: number; y: number | null }[] {
+  const size = Math.max(2, window)
+  return measurements.map((measurement, index) => {
+    const start = Math.max(0, index - size + 1)
+    let sum = 0
+    for (let i = start; i <= index; i += 1) {
+      sum += pick(measurements[i])
+    }
+    return {
+      x: new Date(measurement.ts).getTime(),
+      y: sum / (index - start + 1),
+    }
+  })
+}
+
 /** Outdoor samples arrive hourly, far sparser than the indoor series. */
 type OutsidePoint = {
   ts: string
@@ -160,6 +217,8 @@ type OutsidePoint = {
 type Props = {
   measurements: Measurement[]
   outside?: OutsidePoint[]
+  incidents?: Incident[]
+  rollingWindow?: number
   humidityMin: number
   humidityMax: number
   tempMin: number
@@ -169,6 +228,8 @@ type Props = {
 export function ClimateChart({
   measurements,
   outside = [],
+  incidents = [],
+  rollingWindow = 8,
   humidityMin,
   humidityMax,
   tempMin,
@@ -213,12 +274,34 @@ export function ClimateChart({
             ...shared,
           },
           {
+            label: `Avg ${rollingWindow} °C`,
+            data: rollingPoints(measurements, rollingWindow, (m) => m.temperature_c),
+            borderColor: '#9a3d12',
+            backgroundColor: 'transparent',
+            yAxisID: 'yTemp',
+            tension: 0.35,
+            spanGaps: true,
+            borderWidth: 2.25,
+            pointRadius: 0,
+          },
+          {
             label: 'Inside %',
             data: toPoints(measurements, times, gapIndexes, (m) => m.humidity_pct),
             borderColor: '#2a6f7a',
             backgroundColor: 'rgba(42, 111, 122, 0.12)',
             yAxisID: 'yHumidity',
             ...shared,
+          },
+          {
+            label: `Avg ${rollingWindow} %`,
+            data: rollingPoints(measurements, rollingWindow, (m) => m.humidity_pct),
+            borderColor: '#1a4d55',
+            backgroundColor: 'transparent',
+            yAxisID: 'yHumidity',
+            tension: 0.35,
+            spanGaps: true,
+            borderWidth: 2.25,
+            pointRadius: 0,
           },
           {
             label: 'Outside °C',
@@ -239,7 +322,7 @@ export function ClimateChart({
         ],
       },
     }
-  }, [measurements, outside])
+  }, [measurements, outside, rollingWindow])
 
   const options = {
     responsive: true,
@@ -250,6 +333,7 @@ export function ClimateChart({
       title: { display: false },
       tooltip: { callbacks: {} },
       gapHighlight: { gaps },
+      incidentMarkers: { incidents },
     },
     scales: {
       yTemp: {
@@ -293,12 +377,18 @@ export function ClimateChart({
   return (
     <>
       <div className="chart-wrap">
-        <Line data={data} options={options} plugins={[gapHighlight]} />
+        <Line data={data} options={options} plugins={[gapHighlight, incidentMarkers]} />
       </div>
       {gaps.length > 0 && (
         <p className="chart-note">
           {gaps.length === 1 ? '1 recording gap' : `${gaps.length} recording gaps`} in this range —
           longest {formatDuration(longestGap)} without data.
+        </p>
+      )}
+      {incidents.length > 0 && (
+        <p className="chart-note">
+          {incidents.length === 1 ? '1 climate shift' : `${incidents.length} climate shifts`} marked
+          on the chart — click a legend item to hide a series.
         </p>
       )}
     </>
