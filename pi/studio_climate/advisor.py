@@ -25,7 +25,7 @@ def iso_week_id(moment) -> str:
 
 
 class AdvisorStore:
-    """Markdown notes + weekly JSON under data/advisor (gitignored)."""
+    """Markdown notes under data/advisor; weekly JSON in reports/ (gitignored)."""
 
     def __init__(self, root: Path | None = None) -> None:
         self.root = root or default_advisor_path()

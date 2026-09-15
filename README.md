@@ -159,7 +159,7 @@ Default bands: humidity 40–55% RH, temperature 18–24 °C (editable). Out-of-
 
 ## Advisor (weekly reports + dashboard chat)
 
-The Pi writes a compact weekly JSON (no 1-minute samples) under `pi/data/advisor/reports/`. Room facts live in `info.md`; what you tried lives in `strategies.md`. Copy the templates from `pi/advisor/*.example.md` if the API has not created them yet.
+The Pi writes a compact weekly JSON (no 1-minute samples) under `pi/data/advisor/reports/` (gitignored). Room facts live in tracked [`pi/data/advisor/info.md`](pi/data/advisor/info.md); what you tried lives in `strategies.md`.
 
 Sunday 03:00 (after you install the timer) runs `python -m studio_climate briefing` and, if [Vibe CLI](https://docs.mistral.ai/getting-started/quickstarts/vibe-code/install-cli) is on `PATH`, a **restricted** pass that may only edit `strategies.md` inside `data/advisor`. Chat never shells out to Vibe.
 

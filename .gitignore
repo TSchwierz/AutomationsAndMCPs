@@ -4,8 +4,7 @@ __pycache__/
 *.egg-info/
 pi/data/*.db
 pi/data/*.db-*
-pi/data/advisor/**
-!pi/data/advisor/.gitkeep
+pi/data/advisor/reports/
 pi/config.toml
 !pi/config.example.toml
 pc-dashboard/node_modules/

@@ -1,10 +1,13 @@
 # Advisor files
 
-The live copies live in `pi/data/advisor/` (gitignored): `info.md`, `strategies.md`, `anomalies.md`, and `reports/YYYY-Www.json`.
+Tracked in git (edit these):
 
-On first start the API copies the `*.example.md` templates from this folder if those files are missing.
+- `pi/data/advisor/info.md` — room facts for the chat
+- `pi/data/advisor/strategies.md` — what you tried
+- `pi/data/advisor/anomalies.md` — unusual untagged shifts
 
-1. Copy `info.example.md` → `../data/advisor/info.md` and describe your studio.
-2. Tag climate-shift incidents in the dashboard as they happen.
-3. Enable `studio-climate-advisor.timer` so a weekly JSON is written and Vibe may append to `strategies.md`.
-4. Chat from the PC dashboard (`npm run dev`) with `MISTRAL_API_KEY` in `pc-dashboard/.env`.
+Not tracked (generated):
+
+- `pi/data/advisor/reports/YYYY-Www.json` — weekly briefings
+
+`*.example.md` in this folder are templates. The API copies them into `data/advisor/` only if a file is missing, so it will not overwrite `info.md`.
